@@ -299,7 +299,10 @@ static uint8_t * get_nal(uint32_t *len, uint8_t **offset, uint8_t *start, uint32
     uint8_t *q ;
     uint8_t *p  =  *offset;
     *len = 0;
-
+    
+    if ((p - start) >= total)
+        return NULL;
+    
     while(1) {
         info =  find_start_code(p, 3);
         if (info == 1)
@@ -316,7 +319,7 @@ static uint8_t * get_nal(uint32_t *len, uint8_t **offset, uint8_t *start, uint32
             break;
         p++;
         if ((p - start) >= total)
-            return NULL;
+            break;
     }
     
     *len = (p - q);
@@ -369,7 +372,7 @@ int rtmp_sender_write_video_frame(void *handle,
     if (nal == NULL) break;
     if (nal[0] == 0x67)  {
         nal_n  = get_nal(&nal_len_n, &buf_offset, buf, total); //get pps
-        if (nal == NULL) {
+        if (nal_n == NULL) {
             RTMP_Log(RTMP_LOGERROR, "No Nal after SPS");
             break;
         }
