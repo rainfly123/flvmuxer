@@ -8,4 +8,5 @@ If you just want to mux to flv file, There's no need to install rtmpdump.
 just run `gcc -o name flv.c`
 
 If it help you a little,  I'll be glad .
-I Love America, Australia, New Zealand. 
+======================
+I Love America, Australia and New Zealand. 
