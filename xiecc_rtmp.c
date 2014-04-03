@@ -21,6 +21,7 @@ typedef struct
     RTMP *rtmp;
     AudioSpecificConfig config;
     uint32_t audio_config_ok;
+    uint32_t video_config_ok;
 }RTMP_XIECC;
 
 
@@ -371,6 +372,9 @@ int rtmp_sender_write_video_frame(void *handle,
     nal = get_nal(&nal_len, &buf_offset, buf, total);
     if (nal == NULL) break;
     if (nal[0] == 0x67)  {
+        if (rtmp_xiecc->video_config_ok > 0) {
+            continue; //only send video sequence set one time
+        }
         nal_n  = get_nal(&nal_len_n, &buf_offset, buf, total); //get pps
         if (nal_n == NULL) {
             RTMP_Log(RTMP_LOGERROR, "No Nal after SPS");
@@ -428,6 +432,7 @@ int rtmp_sender_write_video_frame(void *handle,
         RTMP_Write(rtmp, output, output_len);
         //RTMP Send out
         free(output);
+        rtmp_xiecc->video_config_ok = 1;
         continue;
     }
 
