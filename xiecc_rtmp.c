@@ -1,3 +1,14 @@
+/***************************************************************
+ Author: xiecc
+ Date: 2014-04-03
+ E-mail: xiechc@gmail.com
+ Notice:
+ *  you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as
+ *  published by the Free Software Foundation;
+ *  flvmuxer is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY;
+ *************************************************************/
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
