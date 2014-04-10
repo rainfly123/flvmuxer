@@ -1,4 +1,4 @@
-#include "xiecc_rtmp.h"
+#include "soooner_rtmp.h"
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -112,9 +112,17 @@ int main()
     uint32_t len_2;
     while (1) {
     p_audio = get_adts(&audio_len, &audio_buf_offset, audio_buf, audio_total);
+    if (p_audio == NULL){
+        audio_buf_offset = audio_buf;
+        continue;
+    }
     rtmp_sender_write_audio_frame(p, p_audio, audio_len, audio_ts);
 
     p_video = get_nal(&len, &buf_offset, buf, total);
+    if (p_video == NULL) {
+        buf_offset = buf;
+        continue;
+    }
     printf("%x %d\n", p_video[0], len);
     if (p_video[0] == 0x67) {
             pp = get_nal(&len_1, &buf_offset, buf, total);
@@ -127,8 +135,8 @@ int main()
     }
     else
        rtmp_sender_write_video_frame(p, p_video - 4, len + 4, ts, 0);
-    ts += 120;
-    audio_ts += 100;
-    usleep(100 * 1000);
+    ts += 50;
+    audio_ts += 50;
+    usleep(50 * 1000);
     }
 }
