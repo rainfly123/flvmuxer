@@ -1,5 +1,5 @@
 /*
-  * A generic channel implementation
+  * A H264/AAC TO FLV implementation
   *
   * Copyright (C) 2014 rainfly123 <xiechc@gmail.com>
   *
