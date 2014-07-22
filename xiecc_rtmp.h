@@ -1,5 +1,5 @@
-#ifndef _SOOONER_RTMP_H_
-#define _SOOONER_RTMP_H_
+#ifndef _XIECC_RTMP_H_
+#define _XIECC_RTMP_H_
 #include <stdint.h>
 
 #ifdef __cplusplus
