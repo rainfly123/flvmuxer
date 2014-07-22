@@ -1,21 +1,10 @@
-/***************************************************************
- Author: xiecc
- Date: 2014-04-03
- E-mail: xiechc@gmail.com
- Notice:
- *  you can redistribute it and/or modify
- *  it under the terms of the GNU Lesser General Public License as
- *  published by the Free Software Foundation;
- *  flvmuxer is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY;
- *************************************************************/
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "rtmp.h"
 #include "log.h"
-#include "xiecc_rtmp.h"
+#include "soooner_rtmp.h"
 
 #define AAC_ADTS_HEADER_SIZE 7
 #define FLV_TAG_HEAD_LEN 11
@@ -33,6 +22,7 @@ typedef struct
     AudioSpecificConfig config;
     uint32_t audio_config_ok;
     uint32_t video_config_ok;
+    uint32_t flag;
 }RTMP_XIECC;
 
 
@@ -120,7 +110,7 @@ void *rtmp_sender_alloc(const char *url) //return handle
     if (url == NULL) {
         return NULL;
     }
-    RTMP_LogSetLevel(RTMP_LOGDEBUG);
+    RTMP_LogSetLevel(RTMP_LOGINFO);
     rtmp = RTMP_Alloc();
     RTMP_Init(rtmp);
     rtmp->Link.timeout = 10; //10seconds
@@ -143,19 +133,93 @@ void *rtmp_sender_alloc(const char *url) //return handle
 // @param [in] flag        stream falg
 // @param [in] ts_us       timestamp in us
 // @return             : 0: OK; others: FAILED
+static const AVal av_onMetaData = AVC("onMetaData");
+static const AVal av_duration = AVC("duration");
+static const AVal av_width = AVC("width");
+static const AVal av_height = AVC("height");
+static const AVal av_videocodecid = AVC("videocodecid");
+static const AVal av_avcprofile = AVC("avcprofile");
+static const AVal av_avclevel = AVC("avclevel");
+static const AVal av_videoframerate = AVC("videoframerate");
+static const AVal av_audiocodecid = AVC("audiocodecid");
+static const AVal av_audiosamplerate = AVC("audiosamplerate");
+static const AVal av_audiochannels = AVC("audiochannels");
+static const AVal av_avc1 = AVC("avc1");
+static const AVal av_mp4a  = AVC("mp4a");
+static const AVal av_onPrivateData = AVC("onPrivateData");
+static const AVal av_record = AVC("record");
+
+int rtmp_sender_set_stream_property(void *handle, uint32_t flag, const char *ext){
+    
+    RTMP_XIECC *rtmp_xiecc = (RTMP_XIECC *)handle; 
+    if (rtmp_xiecc == NULL) {
+        return 1;
+    }
+    rtmp_xiecc->flag = flag;
+    if (flag == RTMP_STREAM_PROPERTY_PUBLIC)
+        return rtmp_sender_stop_record(handle);
+    else if (flag == RTMP_STREAM_PROPERTY_ALARM)
+        return rtmp_sender_start_record(handle);
+    else
+        return rtmp_sender_start_record(handle);
+}
+
 int rtmp_sender_start_publish(void *handle, uint32_t flag, int64_t ts_us)
 {
     RTMP_XIECC *rtmp_xiecc = (RTMP_XIECC *)handle; 
     RTMP *rtmp; 
+    int val = 0;
+    uint32_t body_len;
+    uint32_t offset = 0;
+    uint32_t output_len;
+    char buffer[48];
+    char *output = buffer; 
+    char *outend = buffer + sizeof(buffer); 
+    char send_buffer[512];
 
     if (rtmp_xiecc == NULL) {
         return 1;
     }
+    rtmp_xiecc->flag = flag;
     rtmp = rtmp_xiecc->rtmp; 
     if (!RTMP_Connect(rtmp, NULL) || !RTMP_ConnectStream(rtmp, 0))  {
         return 1;
     }
-    return 0;
+    output = AMF_EncodeString(output, outend, &av_onMetaData);
+    *output++ = AMF_ECMA_ARRAY;
+    output = AMF_EncodeInt32(output, outend, 1);
+    output = AMF_EncodeNamedNumber(output, outend, &av_duration, 0.0);
+    body_len = output - buffer;
+    output_len = body_len + FLV_TAG_HEAD_LEN + FLV_PRE_TAG_LEN;
+    send_buffer[offset++] = 0x12; //tagtype scripte 
+    send_buffer[offset++] = (uint8_t)(body_len >> 16); //data len
+    send_buffer[offset++] = (uint8_t)(body_len >> 8); //data len
+    send_buffer[offset++] = (uint8_t)(body_len); //data len
+    send_buffer[offset++] = (uint8_t)(ts_us >> 16); //time stamp
+    send_buffer[offset++] = (uint8_t)(ts_us >> 8); //time stamp
+    send_buffer[offset++] = (uint8_t)(ts_us); //time stamp
+    send_buffer[offset++] = (uint8_t)(ts_us >> 24); //time stamp
+    send_buffer[offset++] = 0x00; //stream id 0
+    send_buffer[offset++] = 0x00; //stream id 0
+    send_buffer[offset++] = 0x00; //stream id 0
+
+    memcpy(send_buffer + offset, buffer, body_len); //H264 sequence parameter set
+    //no need to set pre_tag_size
+    /*
+       offset += body_len;
+       uint32_t fff = body_len + FLV_TAG_HEAD_LEN;
+       output[offset++] = (uint8_t)(fff >> 24); //data len
+       output[offset++] = (uint8_t)(fff >> 16); //data len
+       output[offset++] = (uint8_t)(fff >> 8); //data len
+       output[offset++] = (uint8_t)(fff); //data len
+     */
+    val = RTMP_Write(rtmp, send_buffer, output_len);
+
+    if (flag != RTMP_STREAM_PROPERTY_PUBLIC) {
+        rtmp_sender_start_record(handle);
+    }
+
+    return val;
 }
 
 // @brief stop publish
@@ -170,23 +234,111 @@ int rtmp_sender_stop_publish(void *handle)
         return 1;
     }
 
+    if (rtmp_xiecc->flag != RTMP_STREAM_PROPERTY_PUBLIC) {
+        rtmp_sender_stop_record(handle);
+    }
     rtmp = rtmp_xiecc->rtmp; 
     RTMP_Close(rtmp);
     return 0;
 }
+
+//@brief start record current stream
+int rtmp_sender_start_record(void *handle)
+{
+    RTMP_XIECC *rtmp_xiecc = (RTMP_XIECC *)handle; 
+    RTMP *rtmp; 
+    uint32_t body_len;
+    uint32_t offset = 0;
+    uint32_t output_len;
+    char buffer[48];
+    char *output = buffer; 
+    char *outend = buffer + sizeof(buffer); 
+    char send_buffer[256];
+    int val = 0;
+
+    if (rtmp_xiecc == NULL) {
+        return -1;
+    }
+    rtmp = rtmp_xiecc->rtmp; 
+    output = AMF_EncodeString(output, outend, &av_onPrivateData);
+    *output++ = AMF_ECMA_ARRAY;
+    output = AMF_EncodeInt32(output, outend, 1);
+    output = AMF_EncodeNamedNumber(output, outend, &av_record, 1);
+    body_len = output - buffer;
+    output_len = body_len + FLV_TAG_HEAD_LEN + FLV_PRE_TAG_LEN;
+    send_buffer[offset++] = 0x12; //tagtype scripte 
+    send_buffer[offset++] = (uint8_t)(body_len >> 16); //data len
+    send_buffer[offset++] = (uint8_t)(body_len >> 8); //data len
+    send_buffer[offset++] = (uint8_t)(body_len); //data len
+    send_buffer[offset++] = 0; //time stamp
+    send_buffer[offset++] = 0; //time stamp
+    send_buffer[offset++] = 0; //time stamp
+    send_buffer[offset++] = 0; //time stamp
+    send_buffer[offset++] = 0x00; //stream id 0
+    send_buffer[offset++] = 0x00; //stream id 0
+    send_buffer[offset++] = 0x00; //stream id 0
+
+    memcpy(send_buffer + offset, buffer, body_len);
+    val = RTMP_Write(rtmp, send_buffer, output_len);
+    return val;
+}
+
+int rtmp_sender_stop_record(void *handle)
+{
+    RTMP_XIECC *rtmp_xiecc = (RTMP_XIECC *)handle; 
+    RTMP *rtmp; 
+    int val = 0;
+    uint32_t body_len;
+    uint32_t offset = 0;
+    uint32_t output_len;
+    char buffer[48];
+    char *output = buffer; 
+    char *outend = buffer + sizeof(buffer); 
+    char send_buffer[256];
+
+    if (rtmp_xiecc == NULL) {
+        return 1;
+    }
+    rtmp = rtmp_xiecc->rtmp; 
+    output = AMF_EncodeString(output, outend, &av_onPrivateData);
+    *output++ = AMF_ECMA_ARRAY;
+    output = AMF_EncodeInt32(output, outend, 1);
+    output = AMF_EncodeNamedNumber(output, outend, &av_record, 0);
+    body_len = output - buffer;
+    output_len = body_len + FLV_TAG_HEAD_LEN + FLV_PRE_TAG_LEN;
+    send_buffer[offset++] = 0x12; //tagtype scripte 
+    send_buffer[offset++] = (uint8_t)(body_len >> 16); //data len
+    send_buffer[offset++] = (uint8_t)(body_len >> 8); //data len
+    send_buffer[offset++] = (uint8_t)(body_len); //data len
+    send_buffer[offset++] = 0; //time stamp
+    send_buffer[offset++] = 0; //time stamp
+    send_buffer[offset++] = 0; //time stamp
+    send_buffer[offset++] = 0; //time stamp
+    send_buffer[offset++] = 0x00; //stream id 0
+    send_buffer[offset++] = 0x00; //stream id 0
+    send_buffer[offset++] = 0x00; //stream id 0
+
+    memcpy(send_buffer + offset, buffer, body_len);
+    val = RTMP_Write(rtmp, send_buffer, output_len);
+    return val;
+}
+
 
 // @brief send audio frame
 // @param [in] rtmp_sender handler
 // @param [in] data       : AACAUDIODATA
 // @param [in] size       : AACAUDIODATA size
 // @param [in] dts_us     : decode timestamp of frame
+// @param [in] abs_ts     : indicate whether you'd like to use absolute time stamp
 int rtmp_sender_write_audio_frame(void *handle,
         uint8_t *data,
         int size,
-        uint64_t dts_us)
+        uint64_t dts_us,
+        uint32_t abs_ts)
 {
     RTMP_XIECC *rtmp_xiecc = (RTMP_XIECC *)handle; 
     RTMP *rtmp ;
+    int val = 0;
     uint32_t audio_ts = (uint32_t)dts_us;
     uint8_t * audio_buf = data; 
     uint32_t audio_total = size;
@@ -221,7 +373,7 @@ int rtmp_sender_write_audio_frame(void *handle,
         output[offset++] = (uint8_t)(audio_ts >> 8); //time stamp
         output[offset++] = (uint8_t)(audio_ts); //time stamp
         output[offset++] = (uint8_t)(audio_ts >> 24); //time stamp
-        output[offset++] = 0x00; //stream id 0
+        output[offset++] = abs_ts; //stream id 0
         output[offset++] = 0x00; //stream id 0
         output[offset++] = 0x00; //stream id 0
 
@@ -242,7 +394,7 @@ int rtmp_sender_write_audio_frame(void *handle,
         output[offset++] = (uint8_t)(fff >> 8); //data len
         output[offset++] = (uint8_t)(fff); //data len
         */
-        RTMP_Write(rtmp, output, output_len);
+        val = RTMP_Write(rtmp, output, output_len);
         free(output);
         rtmp_xiecc->audio_config_ok = 1;
     }else
@@ -259,7 +411,7 @@ int rtmp_sender_write_audio_frame(void *handle,
         output[offset++] = (uint8_t)(audio_ts >> 8); //time stamp
         output[offset++] = (uint8_t)(audio_ts); //time stamp
         output[offset++] = (uint8_t)(audio_ts >> 24); //time stamp
-        output[offset++] = 0x00; //stream id 0
+        output[offset++] = abs_ts; //stream id 0
         output[offset++] = 0x00; //stream id 0
         output[offset++] = 0x00; //stream id 0
 
@@ -279,11 +431,11 @@ int rtmp_sender_write_audio_frame(void *handle,
         output[offset++] = (uint8_t)(fff >> 8); //data len
         output[offset++] = (uint8_t)(fff); //data len
         */
-        RTMP_Write(rtmp, output, output_len);
+        val = RTMP_Write(rtmp, output, output_len);
         free(output);
      }
     } //end while 1
-    return 0;
+    return (val > 0) ? 0: -1;
 }
 
 static uint32_t find_start_code(uint8_t *buf, uint32_t zeros_in_startcode)   
@@ -311,10 +463,10 @@ static uint8_t * get_nal(uint32_t *len, uint8_t **offset, uint8_t *start, uint32
     uint8_t *q ;
     uint8_t *p  =  *offset;
     *len = 0;
-    
+
     if ((p - start) >= total)
-        return NULL;
-    
+            return NULL;
+
     while(1) {
         info =  find_start_code(p, 3);
         if (info == 1)
@@ -331,6 +483,7 @@ static uint8_t * get_nal(uint32_t *len, uint8_t **offset, uint8_t *start, uint32
             break;
         p++;
         if ((p - start) >= total)
+            //return NULL;
             break;
     }
     
@@ -345,14 +498,17 @@ static uint8_t * get_nal(uint32_t *len, uint8_t **offset, uint8_t *start, uint32
 // @param [in] size       : video data size
 // @param [in] dts_us     : decode timestamp of frame
 // @param [in] key        : key frame indicate, [0: non key] [1: key]
+// @param [in] abs_ts     : indicate whether you'd like to use absolute time stamp
 int rtmp_sender_write_video_frame(void *handle,
         uint8_t *data,
         int size,
         uint64_t dts_us,
-        int key)
+        int key,
+        uint32_t abs_ts)
 {
     uint8_t * buf; 
     uint8_t * buf_offset;
+    int val = 0;
     int total;
     uint32_t ts;
     uint32_t nal_len;
@@ -384,11 +540,12 @@ int rtmp_sender_write_video_frame(void *handle,
     if (nal == NULL) break;
     if (nal[0] == 0x67)  {
         if (rtmp_xiecc->video_config_ok > 0) {
-            continue; //only send video sequence set one time
+            //only send video seq set once;
+            continue;
         }
         nal_n  = get_nal(&nal_len_n, &buf_offset, buf, total); //get pps
         if (nal_n == NULL) {
-            RTMP_Log(RTMP_LOGERROR, "No Nal after SPS");
+            RTMP_Log(RTMP_LOGERROR, "No Nal after SPS\n");
             break;
         }
         body_len = nal_len + nal_len_n + 16;
@@ -403,7 +560,7 @@ int rtmp_sender_write_video_frame(void *handle,
         output[offset++] = (uint8_t)(ts >> 8); //time stamp
         output[offset++] = (uint8_t)(ts); //time stamp
         output[offset++] = (uint8_t)(ts >> 24); //time stamp
-        output[offset++] = 0x00; //stream id 0
+        output[offset++] = abs_ts; //stream id 0
         output[offset++] = 0x00; //stream id 0
         output[offset++] = 0x00; //stream id 0
 
@@ -440,7 +597,7 @@ int rtmp_sender_write_video_frame(void *handle,
         output[offset++] = (uint8_t)(fff >> 8); //data len
         output[offset++] = (uint8_t)(fff); //data len
         */
-        RTMP_Write(rtmp, output, output_len);
+        val = RTMP_Write(rtmp, output, output_len);
         //RTMP Send out
         free(output);
         rtmp_xiecc->video_config_ok = 1;
@@ -461,7 +618,7 @@ int rtmp_sender_write_video_frame(void *handle,
         output[offset++] = (uint8_t)(ts >> 8); //time stamp
         output[offset++] = (uint8_t)(ts); //time stamp
         output[offset++] = (uint8_t)(ts >> 24); //time stamp
-        output[offset++] = 0x00; //stream id 0
+        output[offset++] = abs_ts; //stream id 0
         output[offset++] = 0x00; //stream id 0
         output[offset++] = 0x00; //stream id 0
 
@@ -487,7 +644,7 @@ int rtmp_sender_write_video_frame(void *handle,
         output[offset++] = (uint8_t)(fff >> 8); //data len
         output[offset++] = (uint8_t)(fff); //data len
         */
-        RTMP_Write(rtmp, output, output_len);
+        val = RTMP_Write(rtmp, output, output_len);
         //RTMP Send out
         free(output);
         continue;
@@ -507,7 +664,7 @@ int rtmp_sender_write_video_frame(void *handle,
         output[offset++] = (uint8_t)(ts >> 8); //time stamp
         output[offset++] = (uint8_t)(ts); //time stamp
         output[offset++] = (uint8_t)(ts >> 24); //time stamp
-        output[offset++] = 0x00; //stream id 0
+        output[offset++] = abs_ts; //stream id 0
         output[offset++] = 0x00; //stream id 0
         output[offset++] = 0x00; //stream id 0
 
@@ -533,14 +690,14 @@ int rtmp_sender_write_video_frame(void *handle,
         output[offset++] = (uint8_t)(fff >> 8); //data len
         output[offset++] = (uint8_t)(fff); //data len
         */
-        RTMP_Write(rtmp, output, output_len);
+        val = RTMP_Write(rtmp, output, output_len);
 
        //RTMP Send out
         free(output);
         continue;
      }
    }
-   return 0;
+   return (val > 0) ? 0: -1;
 }
 
 // @brief free rtmp_sender handler
@@ -561,4 +718,3 @@ void rtmp_sender_free(void *handle)
     }
     free(rtmp_xiecc);
 }
-
